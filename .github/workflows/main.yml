@@ -37,28 +37,70 @@ jobs:
           }
           Write-Host "RDP ready."
 
-      # 2. START PINGGY TUNNEL
+      # 2. DOWNLOAD LOCALTONET (tunnel ổn định nhất)
+      - name: Download localtonet
+        run: |
+          New-Item -ItemType Directory -Path "C:\Tools" -Force | Out-Null
+          Invoke-WebRequest https://localtonet.com/download/localtonet-win-64.zip -OutFile "$env:TEMP\lt.zip"
+          Expand-Archive "$env:TEMP\lt.zip" -DestinationPath "C:\Tools" -Force
+          Get-ChildItem "C:\Tools"
+
+      # 3. START LOCALTONET TUNNEL
       - name: Start tunnel
         run: |
-          $log = "$PWD\tunnel.log"
-          $err = "$PWD\tunnel.err"
-          Start-Process -FilePath "ssh" `
-            -ArgumentList "-o","StrictHostKeyChecking=no","-o","ServerAliveInterval=30","-p","443","-R0:localhost:3389","tcp@a.pinggy.io" `
-            -RedirectStandardOutput $log `
-            -RedirectStandardError $err `
-            -NoNewWindow
-          Start-Sleep -Seconds 20
-          Write-Host "===== TUNNEL STDOUT ====="
-          Get-Content $log -EA SilentlyContinue
-          Write-Host "===== TUNNEL STDERR ====="
-          Get-Content $err -EA SilentlyContinue
-          Write-Host "========================="
+          $token = "${{ secrets.LOCALTONET_TOKEN }}".Trim()
+          if ($token.Length -eq 0) {
+            Write-Host "Chưa có LOCALTONET_TOKEN, dùng bore.pub fallback"
+            Invoke-WebRequest https://github.com/ekzhang/bore/releases/download/v0.5.0/bore-v0.5.0-x86_64-pc-windows-msvc.zip -OutFile bore.zip
+            Expand-Archive bore.zip -DestinationPath . -Force
+            Start-Process -FilePath "$PWD\bore.exe" `
+              -ArgumentList "local","3389","--to","bore.pub:7835" `
+              -RedirectStandardOutput "$PWD\bore.log" `
+              -RedirectStandardError "$PWD\bore.err" `
+              -NoNewWindow
+            Start-Sleep -Seconds 15
+            Write-Host "===== BORE LOG ====="
+            Get-Content "$PWD\bore.log" -EA SilentlyContinue
+            Get-Content "$PWD\bore.err" -EA SilentlyContinue
+          } else {
+            Start-Process -FilePath "C:\Tools\localtonet.exe" -ArgumentList "--authtoken",$token -WindowStyle Hidden
+            Start-Sleep -Seconds 20
+            Write-Host "===== LOCALTONET RUNNING ====="
+            Write-Host "Vô localtonet.com dashboard → xem tunnel URL"
+            Write-Host "Hoặc tải file connection-info.txt trên repo"
+          }
           Write-Host "User: $env:RDP_USER"
           Write-Host "Pass: $env:RDP_PASS"
-          Write-Host "Tìm dòng dạng tcp://xxx.pinggy.io:XXXXX ở trên"
-          Write-Host "Địa chỉ RDP = xxx.pinggy.io:XXXXX"
 
-      # 3. KEEP ALIVE
+      # 4. LƯU THÔNG TIN KẾT NỐI LÊN REPO
+      - name: Save connection info
+        run: |
+          $info = "User: $env:RDP_USER`nPass: $env:RDP_PASS`nRuntime: ${{ inputs.runtime_minutes }} min"
+          $info | Out-File -Encoding utf8 "connection-info.txt"
+          Write-Host $info
+
+      - name: Commit info
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $content = [Convert]::ToBase64String([System.IO.File]::ReadAllBytes("connection-info.txt"))
+          $body = @{ message="update info"; content=$content; branch="${{ github.ref_name }}" } | ConvertTo-Json
+          $hdr = @{ Authorization="Bearer $env:GH_TOKEN"; Accept="application/vnd.github+json" }
+          $uri = "https://api.github.com/repos/${{ github.repository }}/contents/connection-info.txt"
+          try {
+            $existing = Invoke-RestMethod -Uri "$uri`?ref=${{ github.ref_name }}" -Headers $hdr -EA SilentlyContinue
+            if ($existing.sha) {
+              $body = @{ message="update info"; content=$content; sha=$existing.sha; branch="${{ github.ref_name }}" } | ConvertTo-Json
+            }
+          } catch {}
+          try {
+            Invoke-RestMethod -Method PUT -Uri $uri -Headers $hdr -Body $body -ContentType "application/json" | Out-Null
+            Write-Host "Info saved to repo!"
+          } catch {
+            Write-Host "Save failed: $($_.Exception.Message)"
+          }
+
+      # 5. KEEP ALIVE
       - name: Keep alive
         run: |
           $mins = [int]"${{ inputs.runtime_minutes }}"
@@ -71,4 +113,3 @@ jobs:
             Write-Host "Heartbeat #$i | Remaining: $remaining"
             Start-Sleep -Seconds 60
           }
-          Write-Host "Done."
