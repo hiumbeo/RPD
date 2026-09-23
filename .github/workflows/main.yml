@@ -37,29 +37,28 @@ jobs:
           }
           Write-Host "RDP ready."
 
-      # 2. DOWNLOAD BORE
-      - name: Download bore
-        run: |
-          Invoke-WebRequest https://github.com/ekzhang/bore/releases/download/v0.5.0/bore-v0.5.0-x86_64-pc-windows-msvc.zip -OutFile bore.zip
-          Expand-Archive bore.zip -DestinationPath . -Force
-
-      # 3. START TUNNEL
+      # 2. START PINGGY TUNNEL
       - name: Start tunnel
         run: |
-          Start-Process -FilePath "$PWD\bore.exe" `
-            -ArgumentList "local","3389","--to","bore.pub" `
-            -RedirectStandardOutput "$PWD\bore_out.log" `
-            -RedirectStandardError "$PWD\bore_err.log" `
+          $log = "$PWD\tunnel.log"
+          $err = "$PWD\tunnel.err"
+          Start-Process -FilePath "ssh" `
+            -ArgumentList "-o","StrictHostKeyChecking=no","-o","ServerAliveInterval=30","-p","443","-R0:localhost:3389","tcp@a.pinggy.io" `
+            -RedirectStandardOutput $log `
+            -RedirectStandardError $err `
             -NoNewWindow
-          Start-Sleep -Seconds 12
-          Write-Host "===== STDOUT ====="
-          Get-Content "$PWD\bore_out.log" -EA SilentlyContinue
-          Write-Host "===== END ====="
+          Start-Sleep -Seconds 20
+          Write-Host "===== TUNNEL STDOUT ====="
+          Get-Content $log -EA SilentlyContinue
+          Write-Host "===== TUNNEL STDERR ====="
+          Get-Content $err -EA SilentlyContinue
+          Write-Host "========================="
           Write-Host "User: $env:RDP_USER"
           Write-Host "Pass: $env:RDP_PASS"
-          Write-Host "Tìm dòng 'listening at bore.pub:XXXXX'"
+          Write-Host "Tìm dòng dạng tcp://xxx.pinggy.io:XXXXX ở trên"
+          Write-Host "Địa chỉ RDP = xxx.pinggy.io:XXXXX"
 
-      # 4. KEEP ALIVE
+      # 3. KEEP ALIVE
       - name: Keep alive
         run: |
           $mins = [int]"${{ inputs.runtime_minutes }}"
@@ -72,3 +71,4 @@ jobs:
             Write-Host "Heartbeat #$i | Remaining: $remaining"
             Start-Sleep -Seconds 60
           }
+          Write-Host "Done."
